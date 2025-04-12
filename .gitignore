@@ -1,0 +1,8 @@
+# Ignorar todo
+*
+
+# Excepto
+!.gitignore
+!Assets/
+Assets/*
+!Assets/ShowImageForTime.cs
