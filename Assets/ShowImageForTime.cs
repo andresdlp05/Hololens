@@ -33,7 +33,7 @@ public class ShowImageForTime : MonoBehaviour
 
     [Header("Debug")]
     public bool showDebugLogs = true;
-    public bool showDebugVisuals = false;  // Para visualizar raycasts, etc.
+    public bool showDebugVisuals = true;  // Para visualizar raycasts, etc.
     public bool requestEyeCalibration = false; // Solicitar calibración de eye tracking antes de iniciar
 
     // Variables para debug visual (opcional)
@@ -57,6 +57,7 @@ public class ShowImageForTime : MonoBehaviour
     private Vector3 gazeOrigin;
     private Vector3 gazeDirection;
     private bool isUsingHeadGaze = false; // Nueva variable para rastrear si estamos usando head gaze
+    private Vector2 normalizedHitPosition = Vector2.zero; // NUEVO: Para guardar la posición normalizada
 
     // Variables para estadísticas
     private int totalGazeCount = 0;
@@ -69,13 +70,15 @@ public class ShowImageForTime : MonoBehaviour
     private bool eyeTrackingWorking;
     private int testCount;
     private float testStartTime;
-    
+    private GameObject eyeGazeIndicator;
     private IEnumerator CheckEyeTrackingWorking()
     {
         eyeTrackingWorking = false;
         testCount = 0;
         testStartTime = Time.time;  // AHORA está bien, porque está dentro de un método
         
+        Debug.Log("Iniciando verificación de funcionamiento del eye tracking...");
+
         while (Time.time - testStartTime < 3.0f)
         {
             UpdateEyeGaze();
@@ -170,20 +173,19 @@ public class ShowImageForTime : MonoBehaviour
             rotation = 0f;
 
             // 9. Limitar valores para evitar transformaciones extremas
-            scaleX = Mathf.Clamp(scaleX, 0.7f, 1.4f);
-            scaleY = Mathf.Clamp(scaleY, 0.7f, 1.4f);
-            offsetX = Mathf.Clamp(offsetX, -0.3f, 0.3f);
-            offsetY = Mathf.Clamp(offsetY, -0.3f, 0.3f);
+            scaleX = Mathf.Clamp(scaleX, 0.5f, 2.0f);
+            scaleY = Mathf.Clamp(scaleY, 0.5f, 2.0f);
+            offsetX = Mathf.Clamp(offsetX, -0.5f, 0.5f);
+            offsetY = Mathf.Clamp(offsetY, -0.5f, 0.5f);    
 
-            // Verificar parámetros neutrales
-            bool neutralParams = Mathf.Abs(offsetX) < 0.01f && Mathf.Abs(offsetY) < 0.01f &&
-                                Mathf.Abs(scaleX - 1.0f) < 0.01f && Mathf.Abs(scaleY - 1.0f) < 0.01f;
-
-
-            // Registrar valores únicos con timestamp para verificación
-            string uniqueId = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            Debug.Log($"Calibración {uniqueId}: offsetX={offsetX:F3}, offsetY={offsetY:F3}, scaleX={scaleX:F3}, scaleY={scaleY:F3}, rotate={rotation:F3}");
-
+            // Log detallado para verificación
+            Debug.Log($"PARÁMETROS DE CALIBRACIÓN CALCULADOS: offsetX={offsetX:F4}, offsetY={offsetY:F4}, scaleX={scaleX:F4}, scaleY={scaleY:F4}, rotate={rotation:F4}");
+            
+            // NUEVO: Ejemplo de corrección para un punto central
+            Vector2 testPoint = new Vector2(0.5f, 0.5f);
+            Vector2 correctedPoint = ApplyCalibration(testPoint);
+            Debug.Log($"Ejemplo de corrección: Punto central (0.5, 0.5) => {correctedPoint}");
+            
             isCalibrated = true;
         }
 
@@ -200,26 +202,40 @@ public class ShowImageForTime : MonoBehaviour
         public Vector2 ApplyCalibration(Vector2 rawGazePoint)
         {
             if (!isCalibrated) return rawGazePoint;
-
-            // 1. Centrar el punto para aplicar escalas y rotación
-            Vector2 centered = rawGazePoint;
             
-            // 2. Aplicar escala
-            centered.x *= scaleX;
-            centered.y *= scaleY;
-            
-            // 3. Aplicar offset
-            centered.x += offsetX;
-            centered.y += offsetY;
+            // NUEVO: Verificación previa del punto
+            if (!IsValidCoordinate(rawGazePoint))
+            {
+                Debug.LogWarning($"Punto de gaze no válido para calibración: {rawGazePoint}");
+                return new Vector2(0.5f, 0.5f); // Punto seguro por defecto
+            }
 
-            return centered;
+            // Aplicar escala
+            Vector2 scaled = new Vector2(
+                rawGazePoint.x * scaleX,
+                rawGazePoint.y * scaleY
+            );
+            
+            // Aplicar offset
+            Vector2 result = new Vector2(
+                scaled.x + offsetX,
+                scaled.y + offsetY
+            );
+
+            // NUEVO: Clampeo para asegurar que el resultado queda en rango 0-1
+            result.x = Mathf.Clamp01(result.x);
+            result.y = Mathf.Clamp01(result.y);
+            
+            // NUEVO: Log más detallado
+            Debug.Log($"Calibración aplicada: {rawGazePoint:F4} => {result:F4}");
+            
+            return result;
         }
-
-        // Método para convertir los parámetros a un diccionario para Python
         public string ToParameterString()
         {
             return $"offsetX={offsetX}, offsetY={offsetY}, scaleX={scaleX}, scaleY={scaleY}, rotate={rotation}";
         }
+
     }
 
     void Awake()
@@ -234,84 +250,10 @@ public class ShowImageForTime : MonoBehaviour
                 Debug.LogWarning("No se encontró 'MiImagePorDefecto'. Asigna manualmente el componente Image.");
         }
 
-        if (showDebugVisuals)
-            SetupDebugObjects();
+        //SetupDebugObjects();
 
         Initialize();
     }
-
-    private void SetupDebugObjects()
-    {
-        // Esfera para visualizar el punto de impacto
-        debugSphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        debugSphere.transform.localScale = Vector3.one * 0.01f;
-        debugSphere.GetComponent<Renderer>().material.color = Color.red;
-        debugSphere.SetActive(false);
-
-        // Línea para visualizar el rayo de mirada
-        debugLine = gameObject.AddComponent<LineRenderer>();
-        debugLine.startWidth = 0.005f;
-        debugLine.endWidth = 0.001f;
-        debugLine.material = new Material(Shader.Find("Sprites/Default"));
-        debugLine.startColor = Color.green;
-        debugLine.endColor = Color.yellow;
-        debugLine.positionCount = 2;
-    }
-
-    public void Initialize()
-    {
-        if (!isInitialized)
-        {
-            InitializeComponents();
-            SetupDataPath();
-            CheckEyeTrackingCapabilities();
-            // Inicializar datos de calibración
-            calibrationData = new CalibrationData(calibrationPoints);
-            isInitialized = true;
-            if (showDebugLogs)
-                Debug.Log("Inicialización completada");
-        }
-    }
-
-    private void CheckEyeTrackingCapabilities()
-    {
-        // Verificar si el seguimiento ocular está disponible y habilitado
-        if (CoreServices.InputSystem?.EyeGazeProvider != null)
-        {
-            var eyeGazeProvider = CoreServices.InputSystem.EyeGazeProvider;
-            
-            // Intenta habilitarlo explícitamente si está disponible
-            if (!eyeGazeProvider.IsEyeTrackingEnabled)
-            {
-                // Intentar forzar la activación de eye tracking si es posible
-                Debug.Log("Eye tracking no está habilitado. Intentando habilitarlo...");
-                
-                // Algunos proveedores de eye tracking pueden tener métodos específicos para habilitarlo
-                // Esta sección podría variar según la versión de MRTK
-                
-                // Intenta acceder a los datos de eye tracking aunque no esté reportado como habilitado
-                Vector3 testGaze = eyeGazeProvider.GazeOrigin;
-                Debug.Log($"Prueba de acceso a datos: {testGaze}");
-            }
-            
-            if (showDebugLogs)
-            {
-                Debug.Log($"Eye Tracking habilitado: {eyeGazeProvider.IsEyeTrackingEnabled}");
-                Debug.Log($"Eye Tracking datos validos: {eyeGazeProvider.IsEyeTrackingDataValid}");
-                Debug.Log($"Eye Tracking calibracion valida: {(eyeGazeProvider.IsEyeCalibrationValid.HasValue ? eyeGazeProvider.IsEyeCalibrationValid.Value : false)}");
-            }
-            
-            // IMPORTANTE: No forzar el head gaze automaticamente, intentaremos usar eye tracking de todos modos
-            forceHeadGaze = false;
-        }
-        else
-        {
-            forceHeadGaze = true;
-            if (showDebugLogs)
-                Debug.Log("Eye Gaze Provider no disponible. Usando Head Gaze como alternativa.");
-        }
-    }
-
     private void SetupDataPath()
     {
         try
@@ -321,14 +263,117 @@ public class ShowImageForTime : MonoBehaviour
             {
                 Directory.CreateDirectory(csvBasePath);
             }
-            if (showDebugLogs)
-                Debug.Log($"Directorio para datos: {csvBasePath}");
+            Debug.Log($"Directorio para datos CSV: {csvBasePath}");
         }
         catch (Exception ex)
         {
             Debug.LogError($"Error configurando el directorio: {ex.Message}");
         }
     }
+
+    private void SetupDebugObjects()
+    {
+        // Esfera para visualizar el punto de impacto
+        debugSphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        debugSphere.transform.localScale = Vector3.one * 0.02f; // NUEVO: Ligeramente más grande
+        debugSphere.GetComponent<Renderer>().material.color = Color.red;
+        debugSphere.SetActive(false);
+
+        // Línea para visualizar el rayo de mirada
+        if (GetComponent<LineRenderer>() == null) // NUEVO: Evitar duplicar el componente
+        {
+            debugLine = gameObject.AddComponent<LineRenderer>();
+            debugLine.startWidth = 0.005f;
+            debugLine.endWidth = 0.001f;
+            debugLine.material = new Material(Shader.Find("Sprites/Default"));
+            debugLine.startColor = Color.green;
+            debugLine.endColor = Color.yellow;
+            debugLine.positionCount = 2;
+        }
+        else
+        {
+            debugLine = GetComponent<LineRenderer>();
+        }
+        
+        // NUEVO: Solo crear el indicador de eye gaze si el canvas ya existe
+        if (canvas != null)
+        {
+            CreateEyeGazeIndicator();
+        }
+        else
+        {
+            Debug.LogWarning("Canvas no disponible para crear indicador de eye gaze. Se creará más tarde.");
+        }
+    }
+    
+    // NUEVO: Método para crear un indicador visual del punto de mirada en el canvas
+    private void CreateEyeGazeIndicator()
+    {
+        eyeGazeIndicator = new GameObject("EyeGazeIndicator");
+        eyeGazeIndicator.transform.SetParent(canvas.transform, false);
+
+        Image indicatorImage = eyeGazeIndicator.AddComponent<Image>();
+        indicatorImage.color = new Color(0, 1, 0, 0.7f); // Verde semi-transparente
+        
+        RectTransform rt = indicatorImage.rectTransform;
+        rt.anchorMin = new Vector2(0.5f, 0.5f);
+        rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.sizeDelta = new Vector2(20, 20); // Pequeño punto
+        
+        eyeGazeIndicator.SetActive(showDebugVisuals);
+    }
+
+    public void Initialize()
+    {
+        if (!isInitialized)
+        {
+            InitializeComponents();
+            SetupDataPath();
+            SetupDebugObjects();
+            CheckEyeTrackingCapabilities();
+            // Inicializar datos de calibración
+            calibrationData = new CalibrationData(calibrationPoints);
+            isInitialized = true;
+            if (showDebugLogs)
+                Debug.Log("Inicialización completada");
+        }
+    }
+
+private void CheckEyeTrackingCapabilities()
+{
+    // Verificar si el seguimiento ocular está disponible y habilitado
+    if (CoreServices.InputSystem?.EyeGazeProvider != null)
+    {
+        var eyeGazeProvider = CoreServices.InputSystem.EyeGazeProvider;
+        
+        // Intenta habilitarlo explícitamente si está disponible
+        if (!eyeGazeProvider.IsEyeTrackingEnabled)
+        {
+            Debug.Log("Eye tracking no está habilitado. Intentando habilitarlo...");
+            
+            // NUEVO: En lugar de enumerar proveedores, solo registrar información general
+            Debug.Log("Sistema de entrada MRTK disponible, pero eye tracking no está habilitado");
+            
+            // Intenta acceder a los datos de eye tracking aunque no esté reportado como habilitado
+            Vector3 testGaze = eyeGazeProvider.GazeOrigin;
+            Debug.Log($"Prueba de acceso a datos: {testGaze}");
+        }
+        
+        Debug.Log($"Estado del Eye Tracking:");
+        Debug.Log($"- Habilitado: {eyeGazeProvider.IsEyeTrackingEnabled}");
+        Debug.Log($"- Datos válidos: {eyeGazeProvider.IsEyeTrackingDataValid}");
+        Debug.Log($"- Calibración válida: {(eyeGazeProvider.IsEyeCalibrationValid.HasValue ? eyeGazeProvider.IsEyeCalibrationValid.Value : false)}");
+        
+        forceHeadGaze = false;
+    }
+    else
+    {
+        Debug.LogWarning("Eye Gaze Provider no disponible. Usando Head Gaze como alternativa.");
+        forceHeadGaze = true;
+    }
+}
+
 
     private void InitializeComponents()
     {
@@ -340,8 +385,7 @@ public class ShowImageForTime : MonoBehaviour
             if (canvases.Length > 0)
             {
                 canvas = canvases[0];
-                if (showDebugLogs)
-                    Debug.Log($"Usando canvas existente: {canvas.name}");
+                Debug.Log($"Usando canvas existente: {canvas.name}");
             }
             else
             {
@@ -352,8 +396,7 @@ public class ShowImageForTime : MonoBehaviour
                 if (Camera.main != null)
                 {
                     canvasObj.transform.SetParent(Camera.main.transform, false);
-                    if (showDebugLogs)
-                        Debug.Log("Canvas creado y asignado a la Main Camera");
+                    Debug.Log("Canvas creado y asignado a la Main Camera");
                 }
             }
         }
@@ -389,7 +432,11 @@ public class ShowImageForTime : MonoBehaviour
         }
         
         // Inicialmente ocultar el texto
-        imageNumberText.gameObject.SetActive(false);
+        if (imageNumberText != null)
+        {
+            imageNumberText.gameObject.SetActive(false);
+        }
+    
         
         // Preparar prefab para puntos de calibración si no existe
         if (calibrationPointPrefab == null)
@@ -410,8 +457,11 @@ public class ShowImageForTime : MonoBehaviour
             calibrationPointPrefab = pointObj;
             calibrationPointPrefab.SetActive(false);
             
-            if (showDebugLogs)
-                Debug.Log("Creado prefab para puntos de calibración");
+            Debug.Log("Creado prefab para puntos de calibración");
+        }
+        if (canvas != null && eyeGazeIndicator == null)
+        {
+            CreateEyeGazeIndicator();
         }
     }
 
@@ -432,8 +482,8 @@ public class ShowImageForTime : MonoBehaviour
         }
         // Ajustar la escala para que el canvas tenga un tamaño adecuado para HoloLens
         canvas.transform.localScale = new Vector3(0.0018f, 0.0018f, 0.0018f);
-        if (showDebugLogs)
-            Debug.Log($"Canvas posicionado en: {canvas.transform.position}, escala: {canvas.transform.localScale}");
+        
+        Debug.Log($"Canvas posicionado en: {canvas.transform.position}, escala: {canvas.transform.localScale}");
 
         canvasScaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         canvasScaler.referenceResolution = new Vector2(1920, 1080);
@@ -536,7 +586,7 @@ public class ShowImageForTime : MonoBehaviour
     private IEnumerator RunCalibrationProcess()
     {
         if (showDebugLogs)
-            Debug.Log("Iniciando proceso de calibración...");
+            Debug.Log("Iniciando proceso de calibraçao...");
 
         yield return StartCoroutine(CheckEyeTrackingWorking());
         // Reiniciar completamente la calibración para cada nueva sesión
@@ -546,7 +596,7 @@ public class ShowImageForTime : MonoBehaviour
         if (imageDisplay != null)
             imageDisplay.enabled = false;      
         // Mostrar instrucciones de calibración
-        imageNumberText.text = "Calibración\nSiga con la mirada el punto rojo";
+        imageNumberText.text = "Calibraçao\nSiga con la mirada el punto rojo";
         imageNumberText.gameObject.SetActive(true);
            // Asegurarse de que el texto de calibración sea visible
         RectTransform textRT = imageNumberText.rectTransform;
@@ -587,7 +637,7 @@ public class ShowImageForTime : MonoBehaviour
         }
         
         // Depuración
-        Debug.Log($"Iniciando secuencia de {calibrationPositions.Length} puntos de calibración");
+        Debug.Log($"Iniciando secuencia de {calibrationPositions.Length} puntos de calibraçao");
 
 
         // Realizar calibración con cada punto
@@ -634,7 +684,7 @@ public class ShowImageForTime : MonoBehaviour
             Vector2 averageGazePos = Vector2.zero;
             int validSamples = 0;
             float calibrationStartTime = Time.time;
-            float maxCalibrationTime = calibrationPointDuration; // Límite de tiempo
+            //float maxCalibrationTime = calibrationPointDuration; // Límite de tiempo
 
 
             while (Time.time - calibrationStartTime < calibrationPointDuration)
@@ -647,6 +697,13 @@ public class ShowImageForTime : MonoBehaviour
                 {
                     // Convertir posición 3D a posición normalizada 2D en el canvas
                     Vector2 hitPos2D = WorldToCanvasPosition(hitPosition);
+                    
+                    // NUEVO: Log más frecuente para diagnóstico
+                    if (validSamples % 10 == 0)
+                    {
+                        Debug.Log($"Muestra {validSamples} para punto {i+1}: Posición normalizada={hitPos2D:F4}");
+                    }
+                    
                     averageGazePos += hitPos2D;
                     validSamples++;
                 }
@@ -654,22 +711,6 @@ public class ShowImageForTime : MonoBehaviour
                 yield return null;
             }
             
-            // Calcular posición promedio de la mirada si tenemos muestras válidas
-            if (validSamples > 10)
-            {
-                averageGazePos /= validSamples;
-                calibrationData.actualGazePoints[i] = averageGazePos;
-                
-                if (showDebugLogs)
-                    Debug.Log($"Punto {i+1}: Posición objetivo={normalizedPos}, Posición mirada={averageGazePos}, Muestras={validSamples}");
-            }
-            else
-            {
-                // Si no tenemos muestras válidas, usar la posición ideal (podría ajustarse)
-                Vector2 artificialGaze = normalizedPos + new Vector2(0.05f, 0.05f);
-                calibrationData.actualGazePoints[i] = artificialGaze;
-                Debug.LogWarning($"No se obtuvieron muestras válidas para el punto {i+1}");
-            }
             
             // Breve pausa antes del siguiente punto
             yield return new WaitForSeconds(0.2f);
@@ -682,7 +723,7 @@ public class ShowImageForTime : MonoBehaviour
         calibrationData.CalculateCalibrationParameters();
         
         // Mostrar mensaje de finalización
-        imageNumberText.text = "¡Calibración Completada!";
+        imageNumberText.text = "¡Calibraçao Completada!";
         imageNumberText.gameObject.SetActive(true);
         
         yield return new WaitForSeconds(2f);
